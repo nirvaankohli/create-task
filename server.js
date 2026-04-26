@@ -23,6 +23,7 @@ function getGameState(game) {
     board: game.chess.board(),
     turn: game.chess.turn(),
     state: game.state,
+    drawProposal: game.drawProposal,
   };
 }
 
@@ -52,6 +53,7 @@ wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   ws.gameID = url.searchParams.get("gameID");
   ws.player_cookie_hash = url.searchParams.get("player_cookie_hash");
+  const gameID = ws.gameID;
   if (
     ws.player_cookie_hash !== games[ws.gameID]?.player1?.cookie_hash &&
     ws.player_cookie_hash !== games[ws.gameID]?.player2?.cookie_hash
@@ -137,6 +139,7 @@ wss.on("connection", (ws, req) => {
         game.state = "resigned";
         game.winner = data.player === "w" ? "b" : "w";
         game.end_reason = "resignation";
+        game.drawProposal = null;
         broadcastToGame(gameID, {
           type: "update",
           gameID,
@@ -148,11 +151,128 @@ wss.on("connection", (ws, req) => {
       }
 
       if (data.update === "propose_draw") {
+        const player = [game.player1, game.player2].find(
+          (p) => p?.cookie_hash === ws.player_cookie_hash,
+        );
+
+        if (!player) {
+          ws.send(
+            JSON.stringify({ type: "error", message: "Invalid player." }),
+          );
+          return;
+        }
+
+        if (game.drawProposal?.player === player.color) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "You already proposed a draw.",
+            }),
+          );
+          return;
+        }
+
+        if (game.drawProposal) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "A draw has already been proposed.",
+            }),
+          );
+          return;
+        }
+
+        game.drawProposal = {
+          player: player.color,
+        };
+
         broadcastToGame(gameID, {
           type: "update",
           gameID,
           update: "propose_draw",
-          player: data.player ?? null,
+          player: player.color,
+          gameState: getGameState(game),
+        });
+        return;
+      }
+
+      if (data.update === "accept_draw") {
+        const player = [game.player1, game.player2].find(
+          (p) => p?.cookie_hash === ws.player_cookie_hash,
+        );
+
+        if (!player) {
+          ws.send(
+            JSON.stringify({ type: "error", message: "Invalid player." }),
+          );
+          return;
+        }
+
+        if (!game.drawProposal) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "No draw proposal to accept.",
+            }),
+          );
+          return;
+        }
+
+        if (game.drawProposal.player === player.color) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "You cannot accept your own draw proposal.",
+            }),
+          );
+          return;
+        }
+
+        const proposedBy = game.drawProposal.player;
+        game.state = "draw";
+        game.end_reason = "mutual_agreement";
+        game.drawProposal = null;
+        broadcastToGame(gameID, {
+          type: "update",
+          gameID,
+          update: "accept_draw",
+          player: player.color,
+          proposedBy,
+          gameState: getGameState(game),
+        });
+        return;
+      }
+
+      if (data.update === "cancel_draw") {
+        const player = [game.player1, game.player2].find(
+          (p) => p?.cookie_hash === ws.player_cookie_hash,
+        );
+
+        if (!player) {
+          ws.send(
+            JSON.stringify({ type: "error", message: "Invalid player." }),
+          );
+          return;
+        }
+
+        if (!game.drawProposal) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "No draw proposal to cancel.",
+            }),
+          );
+          return;
+        }
+
+        const proposedBy = game.drawProposal.player;
+        game.drawProposal = null;
+        broadcastToGame(gameID, {
+          type: "update",
+          gameID,
+          update: "cancel_draw",
+          player: player.color,
+          proposedBy,
           gameState: getGameState(game),
         });
         return;
@@ -169,9 +289,7 @@ wss.on("connection", (ws, req) => {
     );
   });
 
-  ws.on("close", () => {
-    console.log("Client disconnected");
-  });
+  ws.on("close", () => {});
 });
 
 app.get("/", (req, res) => {
@@ -195,6 +313,7 @@ app.post("/create-game", (req, res) => {
     state: "waiting_for_player",
     winner: null,
     end_reason: null,
+    drawProposal: null,
   };
 
   res.json({ success: true, gameID: gameID });
