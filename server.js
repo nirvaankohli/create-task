@@ -18,46 +18,121 @@ function randomGameID() {
   return Math.random().toString(36).substring(2, 15);
 }
 
+function getGameState(game) {
+  return {
+    board: game.chess.board(),
+    turn: game.chess.turn(),
+    state: game.state,
+  };
+}
+
+function broadcastToGame(gameID, payload) {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN && client.gameID === gameID) {
+      client.send(JSON.stringify(payload));
+    }
+  });
+}
+
 function broadcastGameState(gameID) {
   const game = games[gameID];
   if (!game) {
     return;
   }
 
-  const gameState = {
-    board: game.chess.board(),
-    turn: game.turn,
-    state: game.state,
-  };
-
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN && client.gameID === gameID) {
-      client.send(
-        JSON.stringify({
-          type: "game_state",
-          gameID,
-          gameState,
-        })
-      );
-    }
+  game.turn = game.chess.turn();
+  broadcastToGame(gameID, {
+    type: "game_state",
+    gameID,
+    gameState: getGameState(game),
   });
 }
 
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   ws.gameID = url.searchParams.get("gameID");
-});
 
+  ws.on("message", (message) => {
+    const data = JSON.parse(message.toString());
+    const gameID = ws.gameID;
+    const game = games[gameID];
+
+    if (!game) {
+      ws.send(JSON.stringify({ type: "error", message: "Game not found." }));
+      return;
+    }
+
+    if (data.type === "move") {
+      try {
+        const result = game.chess.move(data.move);
+        game.turn = game.chess.turn();
+
+        if (game.chess.isCheckmate()) {
+          game.state = "checkmate";
+        } else if (game.chess.isDraw()) {
+          game.state = "draw";
+        } else {
+          game.state = "in_progress";
+        }
+
+        ws.send(JSON.stringify({ type: "move_result", status: "legal", move: result }));
+        broadcastGameState(gameID);
+      } catch (error) {
+        ws.send(
+          JSON.stringify({
+            type: "move_result",
+            status: "illegal",
+            message: error.message,
+          }),
+        );
+      }
+      return;
+    }
+
+    if (data.type === "update") {
+      if (data.update === "resign") {
+        game.state = "resigned";
+        broadcastToGame(gameID, {
+          type: "update",
+          gameID,
+          update: "resign",
+          player: data.player ?? null,
+          gameState: getGameState(game),
+        });
+        return;
+      }
+
+      if (data.update === "propose_draw") {
+        broadcastToGame(gameID, {
+          type: "update",
+          gameID,
+          update: "propose_draw",
+          player: data.player ?? null,
+        });
+        return;
+      }
+
+      ws.send(JSON.stringify({ type: "error", message: "Unknown update type." }));
+      return;
+    }
+
+    ws.send(JSON.stringify({ type: "error", message: "Unknown message type." }));
+  });
+
+  ws.on("close", () => {
+    console.log("Client disconnected");
+  });
+});
 
 app.get("/", (req, res) => {
   res.send("EzChess Server is running.");
 });
 
 app.post("/create-game", (req, res) => {
-  color = req.body.color;
-  player_cookie_hash = req.body.player_cookie_hash;
+  const color = req.body.color;
+  const player_cookie_hash = req.body.player_cookie_hash;
 
-  gameID = randomGameID();
+  const gameID = randomGameID();
   games[gameID] = {
     id: gameID,
     chess: new Chess(),
@@ -74,8 +149,8 @@ app.post("/create-game", (req, res) => {
 });
 
 app.post("/join-game", (req, res) => {
-  gameID = req.body.gameID;
-  player_cookie_hash = req.body.player_cookie_hash;
+  const gameID = req.body.gameID;
+  const player_cookie_hash = req.body.player_cookie_hash;
 
   if (games[gameID] && games[gameID].state === "waiting_for_player") {
     games[gameID].player2 = {
@@ -83,6 +158,7 @@ app.post("/join-game", (req, res) => {
       color: games[gameID].player1.color === "w" ? "b" : "w",
     };
     games[gameID].state = "in_progress";
+    broadcastGameState(gameID);
     res.json({ success: true, gameID: gameID });
   } else {
     res.status(400).json({
