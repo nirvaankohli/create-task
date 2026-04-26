@@ -53,6 +53,15 @@ wss.on("connection", (ws, req) => {
   ws.gameID = url.searchParams.get("gameID");
   ws.player_cookie_hash = url.searchParams.get("player_cookie_hash");
 
+  if (
+    ws.player_cookie_hash !== games[ws.gameID]?.player1?.cookie_hash &&
+    ws.player_cookie_hash !== games[ws.gameID]?.player2?.cookie_hash
+  ) {
+    ws.send(JSON.stringify({ type: "error", message: "Invalid player." }));
+    ws.close();
+    return;
+  }
+
   ws.on("message", (message) => {
     const data = JSON.parse(message.toString());
     const gameID = ws.gameID;
