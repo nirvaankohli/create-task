@@ -15,7 +15,7 @@ const wss = new WebSocket.Server({ server });
 games = {};
 
 function randomGameID() {
-    return Math.random().toString(36).substring(2, 15);
+  return Math.random().toString(36).substring(2, 15);
 }
 
 app.get("/", (req, res) => {
@@ -38,6 +38,27 @@ app.post("/create-game", (req, res) => {
     turn: "w",
     state: "waiting_for_player",
   };
+
+  res.json({ success: true, gameID: gameID });
+});
+
+app.post("/join-game", (req, res) => {
+  gameID = req.body.gameID;
+  player_cookie_hash = req.body.player_cookie_hash;
+
+  if (games[gameID] && games[gameID].state === "waiting_for_player") {
+    games[gameID].player2 = {
+      cookie_hash: player_cookie_hash,
+      color: games[gameID].player1.color === "w" ? "b" : "w",
+    };
+    games[gameID].state = "in_progress";
+    res.json({ success: true, gameID: gameID });
+  } else {
+    res.status(400).json({
+      success: false,
+      message: "Game not found or already in progress.",
+    });
+  }
 });
 
 app.listen(PORT, () => {
