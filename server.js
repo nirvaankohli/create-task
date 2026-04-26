@@ -77,9 +77,29 @@ wss.on("connection", (ws, req) => {
         const player = [game.player1, game.player2].find(
           (p) => p?.cookie_hash === ws.player_cookie_hash,
         );
+
         if (!player || player.color !== game.turn) {
-          throw new Error("You cannot move this piece.");
+          ws.send(
+            JSON.stringify({
+              type: "move_result",
+              status: "illegal",
+              message: "Invalid move.",
+            }),
+          );
+          return;
         }
+
+        if (game.chess.get(data.move.from)?.color !== game.turn) {
+          ws.send(
+            JSON.stringify({
+              type: "move_result",
+              status: "illegal",
+              message: "Invalid move.",
+            }),
+          );
+          return;
+        }
+
         const result = game.chess.move(data.move);
         game.turn = game.chess.turn();
 
