@@ -12,11 +12,42 @@ const PORT = 3000;
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-games = {};
+const games = {};
 
 function randomGameID() {
   return Math.random().toString(36).substring(2, 15);
 }
+
+function broadcastGameState(gameID) {
+  const game = games[gameID];
+  if (!game) {
+    return;
+  }
+
+  const gameState = {
+    board: game.chess.board(),
+    turn: game.turn,
+    state: game.state,
+  };
+
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN && client.gameID === gameID) {
+      client.send(
+        JSON.stringify({
+          type: "game_state",
+          gameID,
+          gameState,
+        })
+      );
+    }
+  });
+}
+
+wss.on("connection", (ws, req) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  ws.gameID = url.searchParams.get("gameID");
+});
+
 
 app.get("/", (req, res) => {
   res.send("EzChess Server is running.");
@@ -61,6 +92,6 @@ app.post("/join-game", (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });
