@@ -52,7 +52,6 @@ wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   ws.gameID = url.searchParams.get("gameID");
   ws.player_cookie_hash = url.searchParams.get("player_cookie_hash");
-
   if (
     ws.player_cookie_hash !== games[ws.gameID]?.player1?.cookie_hash &&
     ws.player_cookie_hash !== games[ws.gameID]?.player2?.cookie_hash
@@ -61,6 +60,8 @@ wss.on("connection", (ws, req) => {
     ws.close();
     return;
   }
+
+  broadcastGameState(gameID);
 
   ws.on("message", (message) => {
     const data = JSON.parse(message.toString());
@@ -134,6 +135,8 @@ wss.on("connection", (ws, req) => {
     if (data.type === "update") {
       if (data.update === "resign") {
         game.state = "resigned";
+        game.winner = data.player === "w" ? "b" : "w";
+        game.end_reason = "resignation";
         broadcastToGame(gameID, {
           type: "update",
           gameID,
@@ -150,6 +153,7 @@ wss.on("connection", (ws, req) => {
           gameID,
           update: "propose_draw",
           player: data.player ?? null,
+          gameState: getGameState(game),
         });
         return;
       }
@@ -189,6 +193,8 @@ app.post("/create-game", (req, res) => {
     player2: null,
     turn: "w",
     state: "waiting_for_player",
+    winner: null,
+    end_reason: null,
   };
 
   res.json({ success: true, gameID: gameID });
