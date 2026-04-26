@@ -51,8 +51,7 @@ function broadcastGameState(gameID) {
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   ws.gameID = url.searchParams.get("gameID");
-
-  ws.on("message", (message) => {
+  ws.player_cookie_hash = url.searchParams.get("player_cookie_hash")
     const data = JSON.parse(message.toString());
     const gameID = ws.gameID;
     const game = games[gameID];
@@ -64,6 +63,12 @@ wss.on("connection", (ws, req) => {
 
     if (data.type === "move") {
       try {
+        const player = [game.player1, game.player2].find(
+          (p) => p?.cookie_hash === ws.player_cookie_hash,
+        );
+        if (!player || player.color !== game.turn) {
+          throw new Error("You cannot move this piece.");
+        }
         const result = game.chess.move(data.move);
         game.turn = game.chess.turn();
 
@@ -75,7 +80,13 @@ wss.on("connection", (ws, req) => {
           game.state = "in_progress";
         }
 
-        ws.send(JSON.stringify({ type: "move_result", status: "legal", move: result }));
+        ws.send(
+          JSON.stringify({
+            type: "move_result",
+            status: "legal",
+            move: result,
+          }),
+        );
         broadcastGameState(gameID);
       } catch (error) {
         ws.send(
@@ -112,11 +123,15 @@ wss.on("connection", (ws, req) => {
         return;
       }
 
-      ws.send(JSON.stringify({ type: "error", message: "Unknown update type." }));
+      ws.send(
+        JSON.stringify({ type: "error", message: "Unknown update type." }),
+      );
       return;
     }
 
-    ws.send(JSON.stringify({ type: "error", message: "Unknown message type." }));
+    ws.send(
+      JSON.stringify({ type: "error", message: "Unknown message type." }),
+    );
   });
 
   ws.on("close", () => {
