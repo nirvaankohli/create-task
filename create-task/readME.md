@@ -1,0 +1,1 @@
+I realized im doing too much so ill create sum rlly quickly
