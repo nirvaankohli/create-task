@@ -24,6 +24,10 @@ function getGameState(game) {
     turn: game.chess.turn(),
     state: game.state,
     drawProposal: game.drawProposal,
+    players: {
+      player1Connected: game.player1?.connected ?? false,
+      player2Connected: game.player2?.connected ?? false,
+    },
   };
 }
 
@@ -54,6 +58,7 @@ wss.on("connection", (ws, req) => {
   ws.gameID = url.searchParams.get("gameID");
   ws.player_cookie_hash = url.searchParams.get("player_cookie_hash");
   const gameID = ws.gameID;
+  const game = games[gameID];
   if (
     ws.player_cookie_hash !== games[ws.gameID]?.player1?.cookie_hash &&
     ws.player_cookie_hash !== games[ws.gameID]?.player2?.cookie_hash
@@ -61,6 +66,21 @@ wss.on("connection", (ws, req) => {
     ws.send(JSON.stringify({ type: "error", message: "Invalid player." }));
     ws.close();
     return;
+  }
+
+  const player = [game.player1, game.player2].find(
+    (p) => p?.cookie_hash === ws.player_cookie_hash,
+  );
+
+  if (player) {
+    player.connected = true;
+    broadcastToGame(gameID, {
+      type: "update",
+      gameID,
+      update: "player_connected",
+      player: player.color,
+      gameState: getGameState(game),
+    });
   }
 
   broadcastGameState(gameID);
@@ -289,7 +309,42 @@ wss.on("connection", (ws, req) => {
     );
   });
 
-  ws.on("close", () => {});
+  ws.on("close", () => {
+    const game = games[ws.gameID];
+
+    if (!game) {
+      return;
+    }
+
+    const player = [game.player1, game.player2].find(
+      (p) => p?.cookie_hash === ws.player_cookie_hash,
+    );
+
+    if (!player) {
+      return;
+    }
+
+    const hasAnotherConnection = Array.from(wss.clients).some(
+      (client) =>
+        client !== ws &&
+        client.readyState === WebSocket.OPEN &&
+        client.gameID === ws.gameID &&
+        client.player_cookie_hash === ws.player_cookie_hash,
+    );
+
+    if (hasAnotherConnection) {
+      return;
+    }
+
+    player.connected = false;
+    broadcastToGame(ws.gameID, {
+      type: "update",
+      gameID: ws.gameID,
+      update: "player_disconnected",
+      player: player.color,
+      gameState: getGameState(game),
+    });
+  });
 });
 
 app.get("/", (req, res) => {
@@ -307,6 +362,7 @@ app.post("/create-game", (req, res) => {
     player1: {
       cookie_hash: player_cookie_hash,
       color: color,
+      connected: false,
     },
     player2: null,
     turn: "w",
@@ -327,6 +383,7 @@ app.post("/join-game", (req, res) => {
     games[gameID].player2 = {
       cookie_hash: player_cookie_hash,
       color: games[gameID].player1.color === "w" ? "b" : "w",
+      connected: false,
     };
     games[gameID].state = "in_progress";
     broadcastGameState(gameID);
