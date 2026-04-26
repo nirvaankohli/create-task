@@ -51,7 +51,9 @@ function broadcastGameState(gameID) {
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   ws.gameID = url.searchParams.get("gameID");
-  ws.player_cookie_hash = url.searchParams.get("player_cookie_hash")
+  ws.player_cookie_hash = url.searchParams.get("player_cookie_hash");
+
+  ws.on("message", (message) => {
     const data = JSON.parse(message.toString());
     const gameID = ws.gameID;
     const game = games[gameID];
